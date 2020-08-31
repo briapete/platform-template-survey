@@ -1,0 +1,18 @@
+---
+core:
+  # server_url: https://<SPACE>.kinops.io  OR https://<SERVER_NAME>.com/kinetic/<SPACE_SLUG>
+  server_url: https://10.203.129.149/kinetic/service-portal
+  space_slug: service-portal
+  space_name: Service Portal
+  service_user_username: portal_admin
+  service_user_password: K1n3t1c
+options:
+  delete: false
+task:
+  # server_url: https://<SPACE>.kinops.io/app/components/task   OR https://<SERVER_NAME>.com/kinetic/kinetic-task
+  server_url: http://10.203.129.149:8081/kinetic-task
+  service_user_username: export_user
+  service_user_password: K1n3T1cDat#
+http_options:
+  log_level: info
+  log_output: stderr

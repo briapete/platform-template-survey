@@ -1,5 +1,3 @@
-#Updated 2020-06-01 By Brian Peterson
-
 # NOTES
 # This is a migration tool not an installation tool.  There are certain expectations that the destination is configured and working.
 # Agent Server(s) must be added ahead of migration.  /space/settings/platformComponents/agents
@@ -19,7 +17,6 @@
 # Example Config File Values (See Readme for additional details)
 #
 =begin yml config file example
-
   ---
   core:
     # server_url: https://<SPACE>.kinops.io  OR https://<SERVER_NAME>.com/kinetic/<SPACE_SLUG>
@@ -38,7 +35,6 @@
   http_options:
     log_level: info
     log_output: stderr
-
 =end
 
 require 'logger'
@@ -150,7 +146,6 @@ else
 end
 
 ###################################################################
-
 # ------------------------------------------------------------------------------
 # Update Space Attributes
 # ------------------------------------------------------------------------------
@@ -284,8 +279,8 @@ destinationDatastoreAttributeArray.each { | spaceAttribute |
 # ------------------------------------------------------------------------------
 
 sourceSecurityPolicyArray = []
-
 destinationSecurityPolicyArray = JSON.parse(space_sdk.find_space_security_policy_definitions().content_string)['securityPolicyDefinitions'].map { |definition|  definition['name']}
+
 if File.file?(file = "#{core_path}/space/securityPolicyDefinitions.json")
   securityPolicyDefinitions = JSON.parse(File.read(file))
   securityPolicyDefinitions.each { |attribute|
@@ -420,52 +415,59 @@ destinationTeamsArray.each do |team|
   end
 end
 
-
 # ------------------------------------------------------------------------------
 # import kapp data
 # ------------------------------------------------------------------------------
 
-Dir["#{core_path}/space/kapps/*.json"].each { |file|
-  kapp = JSON.parse(File.read(file))
-  kappExists = space_sdk.find_kapp(kapp['slug']).code.to_i == 200
-  
-  if kappExists
-    space_sdk.update_kapp(kapp['slug'], kapp)
-  else
-    space_sdk.add_kapp(kapp['name'], kapp['slug'], kapp)
-  end
+kapps_array = []
+Dir["#{core_path}/space/kapps/*"].each { |file|   
+  kapp_slug = file.split(File::SEPARATOR).map {|x| x=="" ? File::SEPARATOR : x}.last.gsub('.json','')
+  next if kapps_array.include?(kapp_slug) # If the loop has already iterated over the kapp from the kapp file or the kapp dir skip the iteration
+  kapps_array.push(kapp_slug) # Append the kapp_slug to an array so a duplicate iteration doesn't occur
+  kapp = {}
+  kapp['slug'] = kapp_slug # set kapp_slug
+    
+  if File.file?(file) or ( File.directory?(file) and File.file?(file = "#{file}.json") ) # If the file is a file or a dir with a corresponding json file
+    kapp = JSON.parse( File.read(file) )
+    kappExists = space_sdk.find_kapp(kapp['slug']).code.to_i == 200  
+    if kappExists
+      space_sdk.update_kapp(kapp['slug'], kapp)
+    else
+      space_sdk.add_kapp(kapp['name'], kapp['slug'], kapp)
+    end
+  end 
 
   # ------------------------------------------------------------------------------
   # Migrate Kapp Attribute Definitions
   # ------------------------------------------------------------------------------
-  sourceKappAttributeArray = []
-  destinationKappAttributeArray = JSON.parse(space_sdk.find_kapp_attribute_definitions(kapp['slug']).content_string)['kappAttributeDefinitions'].map { |definition|  definition['name']}
-  kappAttributeDefinitions = JSON.parse(File.read("#{core_path}/space/kapps/#{kapp['slug']}/kappAttributeDefinitions.json"))
+  if File.file?(file = "#{core_path}/space/kapps/#{kapp['slug']}/kappAttributeDefinitions.json")
+    sourceKappAttributeArray = []
+    destinationKappAttributeArray = JSON.parse(space_sdk.find_kapp_attribute_definitions(kapp['slug']).content_string)['kappAttributeDefinitions'].map { |definition|  definition['name']}
+    kappAttributeDefinitions = JSON.parse(File.read(file))
+    kappAttributeDefinitions.each { |attribute|
+        if destinationKappAttributeArray.include?(attribute['name'])
+          space_sdk.update_kapp_attribute_definition(kapp['slug'], attribute['name'], attribute)
+        else
+          space_sdk.add_kapp_attribute_definition(kapp['slug'], attribute['name'], attribute['description'], attribute['allowsMultiple'])
+        end
+        sourceKappAttributeArray.push(attribute['name'])
+    }   
 
-  kappAttributeDefinitions.each { |attribute|
-      if destinationKappAttributeArray.include?(attribute['name'])
-        space_sdk.update_kapp_attribute_definition(kapp['slug'], attribute['name'], attribute)
-      else
-        space_sdk.add_kapp_attribute_definition(kapp['slug'], attribute['name'], attribute['description'], attribute['allowsMultiple'])
+    destinationKappAttributeArray.each { | attribute |
+      if vars["options"]["delete"] && !sourceKappAttributeArray.include?(attribute)
+          space_sdk.delete_kapp_attribute_definition(kapp['slug'],attribute)
       end
-      sourceKappAttributeArray.push(attribute['name'])
-  }   
-
-  destinationKappAttributeArray.each { | attribute |
-    if vars["options"]["delete"] && !sourceKappAttributeArray.include?(attribute)
-        space_sdk.delete_kapp_attribute_definition(kapp['slug'],attribute)
-    end
-  }
-  
+    }
+  end
 
   # ------------------------------------------------------------------------------
   # Migrate Kapp Category Definitions
   # ------------------------------------------------------------------------------
-  sourceKappCategoryArray = []
-  destinationKappAttributeArray = JSON.parse(space_sdk.find_category_attribute_definitions(kapp['slug']).content_string)['categoryAttributeDefinitions'].map { |definition|  definition['name']}
+  
   if File.file?(file = "#{core_path}/space/kapps/#{kapp['slug']}/categoryAttributeDefinitions.json")
+    sourceKappCategoryArray = []
+    destinationKappAttributeArray = JSON.parse(space_sdk.find_category_attribute_definitions(kapp['slug']).content_string)['categoryAttributeDefinitions'].map { |definition|  definition['name']}  
     kappCategoryDefinitions = JSON.parse(File.read(file))
-
     kappCategoryDefinitions.each { |attribute|
         if destinationKappAttributeArray.include?(attribute['name'])
           space_sdk.update_category_attribute_definition(kapp['slug'], attribute['name'], attribute)
@@ -474,114 +476,119 @@ Dir["#{core_path}/space/kapps/*.json"].each { |file|
         end
         sourceKappCategoryArray.push(attribute['name'])
     }   
+  
+    destinationKappAttributeArray.each { | attribute |
+      if !sourceKappCategoryArray.include?(attribute)
+          space_sdk.delete_category_attribute_definition(kapp['slug'],attribute)
+      end
+    }
   end
-  destinationKappAttributeArray.each { | attribute |
-    if !sourceKappCategoryArray.include?(attribute)
-        space_sdk.delete_category_attribute_definition(kapp['slug'],attribute)
-    end
-  }
-
   # ------------------------------------------------------------------------------
   # Migrate Form Attribute Definitions
   # ------------------------------------------------------------------------------
-  sourceFormAttributeArray = []
-  destinationFormAttributeArray = JSON.parse(space_sdk.find_form_attribute_definitions(kapp['slug']).content_string)['formAttributeDefinitions'].map { |definition|  definition['name']}
-  formAttributeDefinitions = JSON.parse(File.read("#{core_path}/space/kapps/#{kapp['slug']}/formAttributeDefinitions.json"))
+  
+  if File.file?(file = "#{core_path}/space/kapps/#{kapp['slug']}/formAttributeDefinitions.json")
+    sourceFormAttributeArray = []
+    destinationFormAttributeArray = JSON.parse(space_sdk.find_form_attribute_definitions(kapp['slug']).content_string)['formAttributeDefinitions'].map { |definition|  definition['name']}
+    formAttributeDefinitions = JSON.parse(File.read(file))
+    formAttributeDefinitions.each { |attribute|
+        if destinationFormAttributeArray.include?(attribute['name'])
+          space_sdk.update_form_attribute_definition(kapp['slug'], attribute['name'], attribute)
+        else
+          space_sdk.add_form_attribute_definition(kapp['slug'], attribute['name'], attribute['description'], attribute['allowsMultiple'])
+        end
+        sourceFormAttributeArray.push(attribute['name'])
+    }   
 
-  formAttributeDefinitions.each { |attribute|
-      if destinationFormAttributeArray.include?(attribute['name'])
-        space_sdk.update_form_attribute_definition(kapp['slug'], attribute['name'], attribute)
-      else
-        space_sdk.add_form_attribute_definition(kapp['slug'], attribute['name'], attribute['description'], attribute['allowsMultiple'])
+    destinationFormAttributeArray.each { | attribute |
+      if vars["options"]["delete"] && !sourceFormAttributeArray.include?(attribute)
+          space_sdk.delete_form_attribute_definition(kapp['slug'],attribute)
       end
-      sourceFormAttributeArray.push(attribute['name'])
-  }   
+    }
+  end
 
-  destinationFormAttributeArray.each { | attribute |
-    if vars["options"]["delete"] && !sourceFormAttributeArray.include?(attribute)
-        space_sdk.delete_form_attribute_definition(kapp['slug'],attribute)
-    end
-  }
 
   # ------------------------------------------------------------------------------
   # Migrate Security Policy Definitions
   # ------------------------------------------------------------------------------
-  sourceSecurtyPolicyArray = []
-  destinationSecurtyPolicyArray = JSON.parse(space_sdk.find_security_policy_definitions(kapp['slug']).content_string)['securityPolicyDefinitions'].map { |definition|  definition['name']}
-  securityPolicyDefinitions = JSON.parse(File.read("#{core_path}/space/kapps/#{kapp['slug']}/securityPolicyDefinitions.json"))
+  if File.file?(file = "#{core_path}/space/kapps/#{kapp['slug']}/securityPolicyDefinitions.json")
+    sourceSecurtyPolicyArray = []
+    destinationSecurtyPolicyArray = JSON.parse(space_sdk.find_security_policy_definitions(kapp['slug']).content_string)['securityPolicyDefinitions'].map { |definition|  definition['name']}
+    securityPolicyDefinitions = JSON.parse(File.read(file))
 
-  securityPolicyDefinitions.each { |attribute|
-      if destinationSecurtyPolicyArray.include?(attribute['name'])
-        space_sdk.update_security_policy_definition(kapp['slug'], attribute['name'], attribute)
-      else
-        space_sdk.add_security_policy_definition(kapp['slug'], attribute)
+    securityPolicyDefinitions.each { |attribute|
+        if destinationSecurtyPolicyArray.include?(attribute['name'])
+          space_sdk.update_security_policy_definition(kapp['slug'], attribute['name'], attribute)
+        else
+          space_sdk.add_security_policy_definition(kapp['slug'], attribute)
+        end
+        sourceSecurtyPolicyArray.push(attribute['name'])
+    }   
+
+    destinationSecurtyPolicyArray.each { | attribute |
+      if vars["options"]["delete"] && !sourceSecurtyPolicyArray.include?(attribute)
+          space_sdk.delete_security_policy_definition(kapp['slug'],attribute)
       end
-      sourceSecurtyPolicyArray.push(attribute['name'])
-  }   
+    }
+  end
+  # ------------------------------------------------------------------------------
+  # Migrate Categories on the Kapp
+  # TODO: Add code for find, update, and delete when methods are available in the SDK
+  # ------------------------------------------------------------------------------
 
-  destinationSecurtyPolicyArray.each { | attribute |
-    if vars["options"]["delete"] && !sourceSecurtyPolicyArray.include?(attribute)
-        space_sdk.delete_security_policy_definition(kapp['slug'],attribute)
+
+  if File.file?(file = "#{core_path}/space/kapps/#{kapp['slug']}/categories.json")
+    sourceCategoryArray = []
+    #destinationCategoryArray = JSON.parse(space_sdk.find_categories(kapp['slug']).content_string)['securityPolicyDefinitions'].map { |definition|  definition['name']}
+    categories = JSON.parse(File.read(file))
+    categories.each { |attribute|
+      #if destinationCategoryArray.include?(attribute['name'])
+      # update_category_on_kapp Does not exist as a method in the SDK yet
+      #  space_sdk.update_category_on_kapp(attribute)
+      #else
+        space_sdk.add_category_on_kapp(kapp['slug'], attribute)
+      #end
+      sourceCategoryArray.push(attribute['name'])
+    }
+
+    # ------------------------------------------------------------------------------
+    # Delete Categories on the Kapp
+    # TODO: Add code for delete when methods are available in the SDK
+    # ------------------------------------------------------------------------------
+     
+    #destinationCategoryArray.each { | attribute |
+    #  if !sourceCategoryArray.include?(attribute)
+    #      space_sdk.delete_security_policy_definition(kapp['slug'],attribute)
+    #  end
+    #}
+  end
+
+  # ------------------------------------------------------------------------------
+  # import space webhooks
+  # ------------------------------------------------------------------------------
+  sourceSpaceWebhooksArray = []
+  destinationSpaceWebhooksArray = JSON.parse(space_sdk.find_webhooks_on_space().content_string)['webhooks'].map{ |webhook| webhook['name']}
+
+  Dir["#{core_path}/space/webhooks/*.json"].each{ |file|
+    webhook = JSON.parse(File.read(file))
+    if destinationSpaceWebhooksArray.include?(webhook['name'])
+       space_sdk.update_webhook_on_space(webhook['name'], webhook)
+    elsif
+      space_sdk.add_webhook_on_space(webhook)
     end
+    sourceSpaceWebhooksArray.push(webhook['name'])
   }
-   
- # ------------------------------------------------------------------------------
-# Migrate Categories on the Kapp
-# TODO: Add code for find, update, and delete when methods are available in the SDK
-# ------------------------------------------------------------------------------
-sourceCategoryArray = []
-#destinationCategoryArray = JSON.parse(space_sdk.find_categories(kapp['slug']).content_string)['securityPolicyDefinitions'].map { |definition|  definition['name']}
 
-if File.file?(file = "#{core_path}/space/kapps/#{kapp['slug']}/categories.json")
-  categories = JSON.parse(File.read(file))
-  categories.each { |attribute|
-    #if destinationCategoryArray.include?(attribute['name'])
-    # update_category_on_kapp Does not exist as a method in the SDK yet
-    #  space_sdk.update_category_on_kapp(attribute)
-    #else
-      space_sdk.add_category_on_kapp(kapp['slug'], attribute)
-    #end
-    sourceCategoryArray.push(attribute['name'])
-  }
-end
+  # ------------------------------------------------------------------------------
+  # delete space webhooks
+  # TODO: A method doesn't exist for deleting the webhook
+  # ------------------------------------------------------------------------------
 
-# ------------------------------------------------------------------------------
-# Delete Categories on the Kapp
-# TODO: Add code for delete when methods are available in the SDK
-# ------------------------------------------------------------------------------
- 
-#destinationCategoryArray.each { | attribute |
-#  if !sourceCategoryArray.include?(attribute)
-#      space_sdk.delete_security_policy_definition(kapp['slug'],attribute)
-#  end
-#}
-
-# ------------------------------------------------------------------------------
-# import space webhooks
-# ------------------------------------------------------------------------------
-sourceSpaceWebhooksArray = []
-destinationSpaceWebhooksArray = JSON.parse(space_sdk.find_webhooks_on_space().content_string)['webhooks'].map{ |webhook| webhook['name']}
-
-Dir["#{core_path}/space/webhooks/*.json"].each{ |file|
-  webhook = JSON.parse(File.read(file))
-  if destinationSpaceWebhooksArray.include?(webhook['name'])
-     space_sdk.update_webhook_on_space(webhook['name'], webhook)
-  elsif
-    space_sdk.add_webhook_on_space(webhook)
-  end
-  sourceSpaceWebhooksArray.push(webhook['name'])
-}
-
-# ------------------------------------------------------------------------------
-# delete space webhooks
-# TODO: A method doesn't exist for deleting the webhook
-# ------------------------------------------------------------------------------
-
-destinationSpaceWebhooksArray.each do |webhook|
-  if vars["options"]["delete"] && !sourceSpaceWebhooksArray.include?(webhook)
-    space_sdk.delete_webhook_on_space(webhook)
-  end
-end  
+  destinationSpaceWebhooksArray.each do |webhook|
+    if vars["options"]["delete"] && !sourceSpaceWebhooksArray.include?(webhook)
+      space_sdk.delete_webhook_on_space(webhook)
+    end
+  end    
 
   # ------------------------------------------------------------------------------
   # Migrate Kapp Webhooks
@@ -678,45 +685,6 @@ task_sdk.import_trees(true)
 
 
 
-
-# ------------------------------------------------------------------------------
-# Delete Trees and Routines not in the Source Data
-# ------------------------------------------------------------------------------
-
-# identify Trees and Routines on destination
-destinationtrees = []
-trees = JSON.parse(task_sdk.find_trees().content_string)
-trees['trees'].each { |tree|
-  destinationtrees.push( tree['title'] )
-}
-
-# identify Routines in source data
-sourceTrees = []
-Dir["#{task_path}/routines/*.xml"].each {|routine| 
-  doc = Document.new(File.new(routine))
-  root = doc.root
-  sourceTrees.push("#{root.elements["taskTree/name"].text}")
-}
-# identify trees in source data
-Dir["#{task_path}/sources/*"].each {|source| 
-  if File.directory? source
-    Dir["#{source}/trees/*.xml"].each { |tree|
-      doc = Document.new(File.new(tree))
-      root = doc.root
-      tree = "#{root.elements["sourceName"].text} :: #{root.elements["sourceGroup"].text} :: #{root.elements["taskTree/name"].text}"
-      sourceTrees.push(tree)
-    }
-  end
-}
-
-# Delete the extra tress and routines on the source  
-destinationtrees.each { | tree |
-  if vars["options"]["delete"] && !sourceTrees.include?(tree)
-    treeDef = tree.split(' :: ')
-    task_sdk.delete_tree(  tree  )
-  end
-}
-
 # ------------------------------------------------------------------------------
 # import task categories
 # ------------------------------------------------------------------------------
@@ -769,6 +737,44 @@ Dir["#{task_path}/policyRules/*.json"].each { |file|
 destinationPolicyRuleArray.each { |rule|
   if vars["options"]["delete"] && sourcePolicyRuleArray.find {|source_rule| source_rule['name']==rule['name'] && source_rule['type']==rule['type'] }.nil?
     task_sdk.delete_policy_rule(rule)
+  end
+}
+
+# ------------------------------------------------------------------------------
+# Delete Trees and Routines not in the Source Data
+# ------------------------------------------------------------------------------
+
+# identify Trees and Routines on destination
+destinationtrees = []
+trees = JSON.parse(task_sdk.find_trees().content_string)
+Array(trees['trees']).each { |tree|
+  destinationtrees.push( tree['title'] )
+}
+
+# identify Routines in source data
+sourceTrees = []
+Dir["#{task_path}/routines/*.xml"].each {|routine| 
+  doc = Document.new(File.new(routine))
+  root = doc.root
+  sourceTrees.push("#{root.elements["taskTree/name"].text}")
+}
+# identify trees in source data
+Dir["#{task_path}/sources/*"].each {|source| 
+  if File.directory? source
+    Dir["#{source}/trees/*.xml"].each { |tree|
+      doc = Document.new(File.new(tree))
+      root = doc.root
+      tree = "#{root.elements["sourceName"].text} :: #{root.elements["sourceGroup"].text} :: #{root.elements["taskTree/name"].text}"
+      sourceTrees.push(tree)
+    }
+  end
+}
+
+# Delete the extra tress and routines on the source  
+destinationtrees.each { | tree |
+  if vars["options"]["delete"] && !sourceTrees.include?(tree)
+    treeDef = tree.split(' :: ')
+    task_sdk.delete_tree(  tree  )
   end
 }
 
