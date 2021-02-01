@@ -34,7 +34,7 @@
     - key
     - handle
   task:
-    # server_url: https://<SPACE>.kinops.io/app/components/task   OR https://<SERVER_NAME>.com/kinetic/kinetic-task
+    # server_url: https://<SPACE>.kinops.io/app/components/task   OR https://<SERVER_NAME>.com/kinetic-task
     server_url: https://web-server.com
     service_user_username: <USER_NAME>
     service_user_password: <PASSWORD>
@@ -190,21 +190,34 @@ Dir["#{core_path}/**/*.json"].each do |filename|
 end
 
 # export submissions
-logger.info "  - exporting and writing submission data"
-Array(SUBMISSIONS_TO_EXPORT).each do |item|
+logger.info "Exporting and writing submission data"
+(SUBMISSIONS_TO_EXPORT || []).each do |item|
   is_datastore = item["datastore"] || false
-  logger.info "    - #{is_datastore ? 'datastore' : 'kapp'} form #{item['formSlug']}"
+  logger.info "Exporting - #{is_datastore ? 'datastore' : 'kapp'} form #{item['formSlug']}"
   # build directory to write files to
   submission_path = is_datastore ?
     "#{core_path}/space/datastore/forms/#{item['formSlug']}" :
-    "#{core_path}/kapps/#{item['kappSlug']}/forms/#{item['formSlug']}"
-
+    "#{core_path}/space/kapps/#{item['kappSlug']}/forms/#{item['formSlug']}"
+  
+  # get attachment fields from form definition
+  attachment_form = is_datastore ?
+    space_sdk.find_datastore_form(item['formSlug'], {"include" => "fields.details"}) :
+    space_sdk.find_form(item['kappSlug'], item['formSlug'], {"include" => "fields.details"})
+  
+  # get attachment fields from form definition
+  attachement_files = attachment_form.status == 200 ? attachment_form.content['form']['fields'].select{ | file | file['dataType'] == "file" }.map { | field | field['name']  } : {}
+  
+  # set base url for attachments
+  attachment_base_url = is_datastore ?
+    "#{space_sdk.api_url.gsub("/app/api/v1", "")}/app/datastore" :
+    "#{space_sdk.api_url.gsub("/app/api/v1", "")}"
+    
   # create folder to write submission data to
   FileUtils.mkdir_p(submission_path, :mode => 0700)
 
   # build params to pass to the retrieve_form_submissions method
   params = {"include" => "values", "limit" => 1000, "direction" => "ASC"}
- 
+
   # open the submissions file in write mode
   file = File.open("#{submission_path}/submissions.ndjson", 'w');
 
@@ -212,13 +225,32 @@ Array(SUBMISSIONS_TO_EXPORT).each do |item|
   file.truncate(0)
   response = nil
   begin
-    # get submissions
+    # get submissions from datastore form or form
     response = is_datastore ?
       space_sdk.find_all_form_datastore_submissions(item['formSlug'], params).content :
       space_sdk.find_form_submissions(item['kappSlug'], item['formSlug'], params).content
     if response.has_key?("submissions")
-      # write each submission on its own line
+      # iterate over each submission
       (response["submissions"] || []).each do |submission|
+        # write each attachment to a a dir
+        submission['values'].select{ |field, value| attachement_files.include?(field)}.each{ |field,value|
+          submission_id = submission['id']
+          # define the dir to contain the attahment
+          download_dir = "#{submission_path}/#{submission_id}/#{field}"
+          # evaluate fields with multiple attachments
+          value.map.with_index{ | attachment, index |
+            # create folder to write attachment
+            FileUtils.mkdir_p(download_dir, :mode => 0700)
+            # dir and file name to write attachment
+            download_path = "#{download_dir}/#{File.join(".", attachment['name'])}"
+            # url to retrieve the attachment
+            url = URI.escape("#{attachment_base_url}/submissions/#{submission_id}/files/#{field}/#{index}/#{attachment['name']}")
+            # retrieve and write attachment
+            space_sdk.stream_download_to_file(download_path, url, {}, space_sdk.default_headers)
+            # add the "path" key to indicate the attachment's location
+            attachment['path'] = "/#{submission_id}/#{field}/#{attachment['name']}"
+          }
+        }
         # append each submission (removing the submission unwanted attributes)
         file.puts(JSON.generate(submission.delete_if { |key, value| REMOVE_DATA_PROPERTIES.member?(key)}))
       end
