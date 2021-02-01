@@ -1,0 +1,18 @@
+---
+core:
+  # server_url: https://<SPACE>.kinops.io  OR https://<SERVER_NAME>.com/kinetic/<SPACE_SLUG>
+  server_url: https://hanford-dev.kinops.io
+  space_slug: hanford-dev
+  space_name: Hanford MSA
+  service_user_username: brian.peterson@kineticdata.com
+  service_user_password: brian.peterson@kineticdata.com
+options:
+  delete: false
+task:
+  # server_url: https://<SPACE>.kinops.io/app/components/task   OR https://<SERVER_NAME>.com/kinetic/kinetic-task
+  server_url: https://hanford-dev.kinops.io/app/components/task
+  service_user_username: brian.peterson@kineticdata.com
+  service_user_password: brian.peterson@kineticdata.com
+http_options:
+  log_level: info
+  log_output: stderr
